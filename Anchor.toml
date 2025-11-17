@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-verify_ed25519 = "H3eYcELNCrf1iTxVukbkfxu1uzuzSbgeZqjAPjhZWQbe"
+airdrop = "H3eYcELNCrf1iTxVukbkfxu1uzuzSbgeZqjAPjhZWQbe"
 
 [registry]
 url = "https://api.apr.dev"
@@ -17,3 +17,10 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+
+
+[test.validator]
+bind_address = "0.0.0.0"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899
+slots_per_epoch = "32"

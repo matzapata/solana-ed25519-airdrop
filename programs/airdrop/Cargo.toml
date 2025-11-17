@@ -1,12 +1,12 @@
 [package]
-name = "verify-ed25519"
+name = "airdrop"
 version = "0.1.0"
 description = "Created with Anchor"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "verify_ed25519"
+name = "airdrop"
 
 [features]
 default = []
@@ -19,10 +19,9 @@ anchor-debug = []
 custom-heap = []
 custom-panic = []
 
-
 [dependencies]
 anchor-lang = "0.32.1"
-
+solana-program = "2.2.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
