@@ -287,6 +287,11 @@ bn.js@^5.1.2, bn.js@^5.2.0, bn.js@^5.2.1:
   resolved "https://registry.yarnpkg.com/bn.js/-/bn.js-5.2.2.tgz#82c09f9ebbb17107cd72cb7fd39bd1f9d0aaa566"
   integrity sha512-v2YAxEmKaBLahNwE1mjp4WON6huMNeuDvagFZW+ASCuA/ku0bXR9hSMw0XpiqMoA3+rmnyck/tPRSFQkoC9Cuw==
 
+borsh@2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/borsh/-/borsh-2.0.0.tgz#042a9f109565caac3c6a21297cd8c0ae8db3149d"
+  integrity sha512-kc9+BgR3zz9+cjbwM8ODoUB4fs3X3I5A/HtX7LZKxCLaMrEeDFoBpnhZY//DTS1VZBSs6S5v46RZRbZjRFspEg==
+
 borsh@^0.7.0:
   version "0.7.0"
   resolved "https://registry.yarnpkg.com/borsh/-/borsh-0.7.0.tgz#6e9560d719d86d90dc589bca60ffc8a6c51fec2a"
