@@ -12,4 +12,6 @@ pub enum AirdropError {
     DistributorMismatch,
     #[msg("Recipient mismatch in message")]
     RecipientMismatch,
+    #[msg("Failed to deserialize message")]
+    InvalidMessage,
 }

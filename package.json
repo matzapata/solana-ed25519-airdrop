@@ -10,6 +10,7 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "anchor-litesvm": "0.2.1",
+    "borsh": "^2.0.0",
     "litesvm": "0.3.3",
     "tweetnacl": "1.0.3"
   },

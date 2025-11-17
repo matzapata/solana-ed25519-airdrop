@@ -3,8 +3,17 @@ use anchor_lang::solana_program::{
     sysvar::instructions as ix_sysvar,
     sysvar::SysvarId
 };
+use borsh::BorshDeserialize;
 use crate::errors::*;
 use crate::utils::ed25519::verify_ed25519_signature;
+
+//////////////////////////////// MESSAGE ////////////////////////////////
+
+#[derive(BorshDeserialize)]
+pub struct AirdropMessage {
+    pub recipient: Pubkey,
+    pub amount: u64,
+}
 
 //////////////////////////////// INSTRUCTIONS ////////////////////////////////
 
@@ -46,19 +55,15 @@ impl<'info> Claim<'info> {
             AirdropError::DistributorMismatch
         );
 
-        // Parse and validate the message: [recipient pubkey (32 bytes)][amount (u64 little-endian)]
-        let mut recipient_bytes = [0u8; 32];
-        recipient_bytes.copy_from_slice(&message[0..32]);
-        let recipient_from_msg = Pubkey::new_from_array(recipient_bytes);
+        // Deserialize the message using Borsh
+        let airdrop_msg = AirdropMessage::try_from_slice(&message)
+            .map_err(|_| AirdropError::InvalidMessage)?;
         
+        // Validate the recipient matches
         require!(
-            recipient_from_msg == self.recipient.key(),
+            airdrop_msg.recipient == self.recipient.key(),
             AirdropError::RecipientMismatch
         );
-
-        let mut amount_bytes = [0u8; 8];
-        amount_bytes.copy_from_slice(&message[32..40]);
-        let _amount = u64::from_le_bytes(amount_bytes);
 
         // User can now claim the airdrop token.
         // The airdrop transfer can now be implemented here.

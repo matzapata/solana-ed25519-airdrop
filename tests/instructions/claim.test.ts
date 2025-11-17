@@ -7,6 +7,27 @@ import * as nacl from "tweetnacl";
 import { LiteSVM, } from "litesvm";
 import { fromWorkspace, LiteSVMProvider } from 'anchor-litesvm';
 import { sendTransaction } from "../utils/svm";
+import { serialize } from "borsh";
+
+// Define the message structure for Borsh serialization
+class AirdropMessage {
+  recipient: Uint8Array;
+  amount: bigint;
+
+  constructor(fields: { recipient: Uint8Array; amount: bigint }) {
+    this.recipient = fields.recipient;
+    this.amount = fields.amount;
+  }
+
+  // Borsh schema definition
+  static schema = {
+    struct: {
+      recipient: { array: { type: 'u8', len: 32 } },
+      amount: 'u64',
+    }
+  };
+}
+
 
 describe("claim", () => {
   let svm: LiteSVM;
@@ -38,15 +59,20 @@ describe("claim", () => {
     await svm.airdrop(invalidDistributorKeypair.publicKey, BigInt(1000000));
   });
 
+
   function createEd25519Instruction(
     distributorKeypair: Keypair,
     recipientPubkey: PublicKey,
     amount: number
   ): TransactionInstruction {
-    // Build the message: 32 bytes recipient pubkey + 8 bytes amount
-    const message = Buffer.alloc(40);
-    recipientPubkey.toBuffer().copy(message, 0);
-    message.writeBigUInt64LE(BigInt(amount), 32);
+    // Create the message instance
+    const msg = new AirdropMessage({
+      recipient: recipientPubkey.toBytes(),
+      amount: BigInt(amount),
+    });
+
+    // Serialize using Borsh
+    const message = Buffer.from(serialize(AirdropMessage.schema, msg));
 
     // Sign the message with distributor
     const signature = nacl.sign.detached(message, distributorKeypair.secretKey);
