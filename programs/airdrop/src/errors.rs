@@ -14,4 +14,6 @@ pub enum AirdropError {
     RecipientMismatch,
     #[msg("Failed to deserialize message")]
     InvalidMessage,
+    #[msg("Signature deadline has expired")]
+    DeadlineExpired,
 }

@@ -13,15 +13,18 @@ export const sendTransaction = async (
     tx.recentBlockhash = svm.latestBlockhash();
     tx.feePayer = signer.publicKey;
     tx.sign(signer);
-    const sig = await svm.sendTransaction(tx);
-    if (sig instanceof FailedTransactionMetadata) {
-      const error = AnchorError.parse(sig.meta().logs());
+    const result = await svm.sendTransaction(tx);
+    if (result instanceof FailedTransactionMetadata) {
+      const error = AnchorError.parse(result.meta().logs());
       if (error) {
         throw error;
       }
   
-      throw new Error('Unknown error: ' + sig.toString());
+      throw new Error('Unknown error: ' + result.toString());
     }
   
-    return sig;
+    // Get transaction logs - result is TransactionMetadata for successful transactions
+    const logs = result.logs();
+  
+    return { signature: result.signature(), logs };
   };

@@ -1,18 +1,18 @@
-use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{
-    sysvar::instructions as ix_sysvar,
-    sysvar::SysvarId
-};
-use borsh::BorshDeserialize;
 use crate::errors::*;
 use crate::utils::ed25519::verify_ed25519_signature;
+use anchor_lang::prelude::*;
+use anchor_lang::solana_program::{sysvar::instructions as ix_sysvar, sysvar::SysvarId};
+use borsh::BorshDeserialize;
 
 //////////////////////////////// MESSAGE ////////////////////////////////
 
 #[derive(BorshDeserialize)]
 pub struct AirdropMessage {
     pub recipient: Pubkey,
+    pub partner: Pubkey,
     pub amount: u64,
+    pub deadline: i64,
+    pub nonce: u64,
 }
 
 //////////////////////////////// INSTRUCTIONS ////////////////////////////////
@@ -53,14 +53,29 @@ impl<'info> Claim<'info> {
         );
 
         // Deserialize the message using Borsh
-        let airdrop_msg = AirdropMessage::try_from_slice(&message)
-            .map_err(|_| AirdropError::InvalidMessage)?;
-        
+        let airdrop_msg =
+            AirdropMessage::try_from_slice(&message).map_err(|_| AirdropError::InvalidMessage)?;
+
         // Validate the recipient matches
         require!(
             airdrop_msg.recipient == self.recipient.key(),
             AirdropError::RecipientMismatch
         );
+
+        // Validate the deadline hasn't expired
+        let clock = Clock::get()?;
+        require!(
+            clock.unix_timestamp <= airdrop_msg.deadline,
+            AirdropError::DeadlineExpired
+        );
+
+        // Log all fields
+        msg!("Airdrop Message Fields:");
+        msg!("  Recipient: {}", airdrop_msg.recipient);
+        msg!("  Amount: {}", airdrop_msg.amount);
+        msg!("  Partner: {}", airdrop_msg.partner);
+        msg!("  Deadline: {}", airdrop_msg.deadline);
+        msg!("  Nonce: {}", airdrop_msg.nonce);
 
         // User can now claim the airdrop token.
         // The airdrop transfer can now be implemented here.
