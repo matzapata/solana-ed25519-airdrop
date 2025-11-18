@@ -1,13 +1,13 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Airdrop } from "../../target/types/airdrop";
-import { PublicKey, Keypair, TransactionInstruction, Ed25519Program } from "@solana/web3.js";
+import { Keypair } from "@solana/web3.js";
 import { expect } from "chai";
-import * as nacl from "tweetnacl";
 import { LiteSVM, } from "litesvm";
 import { fromWorkspace, LiteSVMProvider } from 'anchor-litesvm';
 import { sendTransaction } from "../utils/svm";
 import { Schema as BorshSchema, serialize } from "borsh";
+import { createEd25519Instruction } from "../utils/ed25519";
 
 // Define the message structure for Borsh serialization
 class AirdropMessage {
@@ -60,38 +60,17 @@ describe("claim", () => {
   });
 
 
-  function createEd25519Instruction(
-    distributorKeypair: Keypair,
-    recipientPubkey: PublicKey,
-    amount: number
-  ): TransactionInstruction {
-    // Create the message instance
-    const msg = new AirdropMessage({
-      recipient: recipientPubkey.toBytes(),
-      amount: BigInt(amount),
-    });
-
-    // Serialize using Borsh
-    const message = Buffer.from(serialize(AirdropMessage.schema, msg));
-
-    // Sign the message with distributor
-    const signature = nacl.sign.detached(message, distributorKeypair.secretKey);
-
-    // Use the helper to build the instruction
-    return Ed25519Program.createInstructionWithPublicKey({
-      publicKey: distributorKeypair.publicKey.toBytes(),
-      message,
-      signature,
-    });
-  }
-
   it("Successfully claims airdrop with valid signature", async () => {
     const claimAmount = 1000000;
 
+    const msg = new AirdropMessage({
+      recipient: recipientKeypair.publicKey.toBytes(),
+      amount: BigInt(claimAmount),
+    });
+
     const ed25519Ix = createEd25519Instruction(
       distributorKeypair,
-      recipientKeypair.publicKey,
-      claimAmount
+      Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
     const claimIx = await program.methods
@@ -118,10 +97,15 @@ describe("claim", () => {
       })
       .instruction();
 
+
+    const msg = new AirdropMessage({
+      recipient: recipientKeypair.publicKey.toBytes(),
+      amount: BigInt(claimAmount),
+    });
+
     const ed25519Ix = createEd25519Instruction(
       distributorKeypair,
-      recipientKeypair.publicKey,
-      claimAmount
+      Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
 
@@ -137,11 +121,14 @@ describe("claim", () => {
   it("Fails with distributor mismatch", async () => {
     const claimAmount = 1000000;
 
-    // Create Ed25519 instruction with wrong distributor
+    const msg = new AirdropMessage({
+      recipient: recipientKeypair.publicKey.toBytes(),
+      amount: BigInt(claimAmount),
+    });
+
     const ed25519Ix = createEd25519Instruction(
-      invalidDistributorKeypair, // Wrong distributor signs
-      recipientKeypair.publicKey,
-      claimAmount
+      invalidDistributorKeypair,
+      Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
     const claimIx = await program.methods
@@ -166,11 +153,15 @@ describe("claim", () => {
     const claimAmount = 1000000;
     const wrongRecipient = Keypair.generate();
 
-    // Create Ed25519 instruction with wrong recipient in message
+
+    const msg = new AirdropMessage({
+      recipient: wrongRecipient.publicKey.toBytes(),
+      amount: BigInt(claimAmount),
+    });
+
     const ed25519Ix = createEd25519Instruction(
       distributorKeypair,
-      wrongRecipient.publicKey, // Wrong recipient in signed message
-      claimAmount
+      Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
     const claimIx = await program.methods
@@ -193,11 +184,15 @@ describe("claim", () => {
   it("Fails when multiple claim instructions try to reuse the same Ed25519 signature", async () => {
     const claimAmount = 1000000;
 
-    // Create a single Ed25519 instruction
+
+    const msg = new AirdropMessage({
+      recipient: recipientKeypair.publicKey.toBytes(),
+      amount: BigInt(claimAmount),
+    });
+
     const ed25519Ix = createEd25519Instruction(
       distributorKeypair,
-      recipientKeypair.publicKey,
-      claimAmount
+      Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
     // First claim instruction (valid)
