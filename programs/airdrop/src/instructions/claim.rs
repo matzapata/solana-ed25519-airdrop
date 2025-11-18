@@ -16,16 +16,17 @@ use borsh::BorshDeserialize;
 pub struct AirdropMessage {
     pub recipient: Pubkey,
     pub partner: Pubkey,
+    pub project_nonce: u64,
     pub amount: u64,
+    
     pub deadline: i64,
     pub nonce: u64,
-    pub project_nonce: u64,
 }
 
 //////////////////////////////// INSTRUCTIONS ////////////////////////////////
 
 #[derive(Accounts)]
-#[instruction(project_nonce: u64)]
+#[instruction(project_nonce: u64, nonce: u64)]
 pub struct Claim<'info> {
     /// The recipient of the airdrop (must match the recipient in the signed message)
     #[account(mut)]
@@ -41,6 +42,21 @@ pub struct Claim<'info> {
         bump
     )]
     pub project: Account<'info, Project>,
+
+    /// Nullifier account to prevent nonce reuse (acts as a nullifier)
+    /// If this account already exists, the transaction will fail, preventing replay attacks
+    #[account(
+        init,
+        payer = recipient,
+        space = ClaimNullifier::DISCRIMINATOR.len() + ClaimNullifier::INIT_SPACE,
+        seeds = [
+            NULLIFIER_SEED_PREFIX,
+            project.key().as_ref(),
+            nonce.to_le_bytes().as_ref(),
+        ],
+        bump
+    )]
+    pub nullifier: Account<'info, ClaimNullifier>,
 
     /// The mint of the SPL token being distributed
     pub mint: Account<'info, Mint>,
@@ -75,7 +91,7 @@ pub struct Claim<'info> {
 //////////////////////////////// HANDLERS ////////////////////////////////
 
 impl<'info> Claim<'info> {
-    pub fn claim(&self, project_nonce: u64) -> Result<()> {
+    pub fn claim(&mut self, project_nonce: u64, nonce: u64) -> Result<()> {
         // Load the instruction sysvar account (holds all tx instructions)
         let ix_sysvar_account = self.instruction_sysvar.to_account_info();
 
@@ -91,6 +107,12 @@ impl<'info> Claim<'info> {
         // Deserialize the message using Borsh
         let airdrop_msg =
             AirdropMessage::try_from_slice(&message).map_err(|_| AirdropError::InvalidMessage)?;
+
+        // Validate the nonce matches (prevents replay attacks)
+        require!(
+            airdrop_msg.nonce == nonce,
+            AirdropError::NonceMismatch
+        );
 
         // Validate the recipient matches
         require!(
@@ -116,6 +138,15 @@ impl<'info> Claim<'info> {
             clock.unix_timestamp <= airdrop_msg.deadline,
             AirdropError::DeadlineExpired
         );
+
+        // Initialize the nullifier to mark this nonce as used
+        // If this nonce was already used, the init constraint above would have failed
+        self.nullifier.set_inner(ClaimNullifier {
+            nonce,
+            project: self.project.key(),
+            recipient: self.recipient.key(),
+            used_at: clock.unix_timestamp,
+        });
 
         // Log all fields
         msg!("Airdrop Message Fields:");

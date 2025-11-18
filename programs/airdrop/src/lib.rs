@@ -18,7 +18,7 @@ pub mod airdrop {
         ctx.accounts.create_project(nonce)
     }
 
-    pub fn claim(ctx: Context<Claim>, project_nonce: u64) -> Result<()> {
-        ctx.accounts.claim(project_nonce)
+    pub fn claim(ctx: Context<Claim>, project_nonce: u64, nonce: u64) -> Result<()> {
+        ctx.accounts.claim(project_nonce, nonce)
     }
 }

@@ -20,4 +20,6 @@ pub enum AirdropError {
     ProjectMismatch,
     #[msg("Mint mismatch")]
     MintMismatch,
+    #[msg("Nonce mismatch - signature replay attack detected")]
+    NonceMismatch,
 }
