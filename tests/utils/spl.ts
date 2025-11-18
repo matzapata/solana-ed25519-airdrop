@@ -88,6 +88,13 @@ export const getSplTokenBalance = async (
     TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID,
   );
+  
+  // Check if account exists first
+  const accountInfo = svm.getAccount(ata);
+  if (!accountInfo) {
+    return BigInt(0);
+  }
+  
   const ataInfo = await getAccount(
     new LiteSVMProvider(svm).connection,
     ata,

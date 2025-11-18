@@ -1,7 +1,13 @@
+use crate::constants::*;
 use crate::errors::*;
-use crate::utils::ed25519::verify_ed25519_signature;
+use crate::state::*;
+use crate::utils::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{sysvar::instructions as ix_sysvar, sysvar::SysvarId};
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token::{Mint, Token, TokenAccount},
+};
 use borsh::BorshDeserialize;
 
 //////////////////////////////// MESSAGE ////////////////////////////////
@@ -13,11 +19,13 @@ pub struct AirdropMessage {
     pub amount: u64,
     pub deadline: i64,
     pub nonce: u64,
+    pub project_nonce: u64,
 }
 
 //////////////////////////////// INSTRUCTIONS ////////////////////////////////
 
 #[derive(Accounts)]
+#[instruction(project_nonce: u64)]
 pub struct Claim<'info> {
     /// The recipient of the airdrop (must match the recipient in the signed message)
     #[account(mut)]
@@ -27,19 +35,47 @@ pub struct Claim<'info> {
     /// CHECK: Validated manually against the parsed message
     pub expected_distributor: UncheckedAccount<'info>,
 
+    /// The project PDA from which tokens will be claimed
+    #[account(
+        seeds = [PROJECT_SEED_PREFIX, project_nonce.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub project: Account<'info, Project>,
+
+    /// The mint of the SPL token being distributed
+    pub mint: Account<'info, Mint>,
+
+    /// The token account owned by the project PDA (source of tokens)
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = project
+    )]
+    pub project_token_account: Account<'info, TokenAccount>,
+
+    /// The recipient's token account (destination of tokens)
+    #[account(
+        init_if_needed,
+        payer = recipient,
+        associated_token::mint = mint,
+        associated_token::authority = recipient
+    )]
+    pub recipient_token_account: Account<'info, TokenAccount>,
+
     /// The sysvar containing the full transaction's instructions
     /// CHECK: Validated by requiring its well-known address
     #[account(address = ix_sysvar::Instructions::id())]
     pub instruction_sysvar: AccountInfo<'info>,
 
-    /// System program used for the transfer
     pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 //////////////////////////////// HANDLERS ////////////////////////////////
 
 impl<'info> Claim<'info> {
-    pub fn claim(&self) -> Result<()> {
+    pub fn claim(&self, project_nonce: u64) -> Result<()> {
         // Load the instruction sysvar account (holds all tx instructions)
         let ix_sysvar_account = self.instruction_sysvar.to_account_info();
 
@@ -62,6 +98,18 @@ impl<'info> Claim<'info> {
             AirdropError::RecipientMismatch
         );
 
+        // Validate the project nonce matches
+        require!(
+            airdrop_msg.project_nonce == project_nonce,
+            AirdropError::ProjectMismatch
+        );
+
+        // Validate the mint matches the project's mint
+        require!(
+            self.project.mint == self.mint.key(),
+            AirdropError::MintMismatch
+        );
+
         // Validate the deadline hasn't expired
         let clock = Clock::get()?;
         require!(
@@ -76,9 +124,28 @@ impl<'info> Claim<'info> {
         msg!("  Partner: {}", airdrop_msg.partner);
         msg!("  Deadline: {}", airdrop_msg.deadline);
         msg!("  Nonce: {}", airdrop_msg.nonce);
+        msg!("  Project Nonce: {}", airdrop_msg.project_nonce);
 
-        // User can now claim the airdrop token.
-        // The airdrop transfer can now be implemented here.
+        // Transfer tokens from project to recipient
+        let nonce_bytes = project_nonce.to_le_bytes();
+        let project_bump = get_project_bump(project_nonce, &crate::ID);
+        let seeds = &[
+            PROJECT_SEED_PREFIX,
+            nonce_bytes.as_ref(),
+            &[project_bump],
+        ];
+        let signer_seeds = &[&seeds[..]];
+
+        transfer_spl(
+            self.token_program.to_account_info(),
+            self.project.to_account_info(),
+            self.project_token_account.to_account_info(),
+            self.recipient_token_account.to_account_info(),
+            airdrop_msg.amount,
+            Some(signer_seeds),
+        )?;
+
+        msg!("Successfully transferred {} tokens to recipient", airdrop_msg.amount);
 
         Ok(())
     }

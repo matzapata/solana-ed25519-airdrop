@@ -1,13 +1,15 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Airdrop } from "../../target/types/airdrop";
-import { Keypair } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import { expect } from "chai";
 import { LiteSVM, Clock } from "litesvm";
 import { fromWorkspace, LiteSVMProvider } from 'anchor-litesvm';
 import { sendTransaction } from "../utils/svm";
 import { Schema as BorshSchema, serialize } from "borsh";
 import { createEd25519Instruction } from "../utils/ed25519";
+import { createSplToken, getSplTokenBalance } from "../utils/spl";
+import { createMintToInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 // Define the message structure for Borsh serialization
 class AirdropMessage {
@@ -16,13 +18,15 @@ class AirdropMessage {
   amount: bigint;
   deadline: bigint;
   nonce: bigint;
+  project_nonce: bigint;
 
-  constructor(fields: { recipient: Uint8Array; partner: Uint8Array; amount: bigint; deadline: bigint; nonce: bigint }) {
+  constructor(fields: { recipient: Uint8Array; partner: Uint8Array; amount: bigint; deadline: bigint; nonce: bigint; project_nonce: bigint }) {
     this.recipient = fields.recipient;
     this.partner = fields.partner;
     this.amount = fields.amount;
     this.deadline = fields.deadline;
     this.nonce = fields.nonce;
+    this.project_nonce = fields.project_nonce;
   }
 
   // Borsh schema definition
@@ -33,6 +37,7 @@ class AirdropMessage {
       amount: 'u64',
       deadline: 'i64',
       nonce: 'u64',
+      project_nonce: 'u64',
     }
   };
 }
@@ -48,6 +53,13 @@ describe("claim", () => {
   let recipientKeypair: Keypair;
   let invalidDistributorKeypair: Keypair;
   let partnerKeypair: Keypair;
+  let authorityKeypair: Keypair;
+
+  // Project and token accounts
+  let projectNonce: bigint;
+  let projectPda: PublicKey;
+  let mint: PublicKey;
+  let projectTokenAccount: PublicKey;
 
   before(async () => {
     svm = fromWorkspace('./')
@@ -59,16 +71,58 @@ describe("claim", () => {
     anchor.setProvider(provider);
     program = anchor.workspace.Airdrop as Program<Airdrop>;
 
-
     distributorKeypair = Keypair.generate();
     recipientKeypair = Keypair.generate();
     invalidDistributorKeypair = Keypair.generate();
     partnerKeypair = Keypair.generate();
+    authorityKeypair = Keypair.generate();
 
-    await svm.airdrop(recipientKeypair.publicKey, BigInt(1000000));
-    await svm.airdrop(distributorKeypair.publicKey, BigInt(1000000));
-    await svm.airdrop(invalidDistributorKeypair.publicKey, BigInt(1000000));
-    await svm.airdrop(partnerKeypair.publicKey, BigInt(1000000));
+    await svm.airdrop(recipientKeypair.publicKey, BigInt(10000000000));
+    await svm.airdrop(distributorKeypair.publicKey, BigInt(10000000000));
+    await svm.airdrop(invalidDistributorKeypair.publicKey, BigInt(10000000000));
+    await svm.airdrop(partnerKeypair.publicKey, BigInt(10000000000));
+    await svm.airdrop(authorityKeypair.publicKey, BigInt(10000000000));
+
+    // Create SPL token mint
+    mint = await createSplToken(provider, authorityKeypair, 9);
+
+    // Initialize project
+    projectNonce = BigInt(1);
+    [projectPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("project"), Buffer.from(new anchor.BN(projectNonce.toString()).toArray("le", 8))],
+      program.programId
+    );
+
+    projectTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      projectPda,
+      true,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    await program.methods
+      .createProject(new anchor.BN(projectNonce.toString()))
+      .accountsPartial({
+        authority: authorityKeypair.publicKey,
+        project: projectPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+      })
+      .signers([authorityKeypair])
+      .rpc();
+
+    // Mint tokens to the project token account
+    const mintToIx = createMintToInstruction(
+      mint,
+      projectTokenAccount,
+      authorityKeypair.publicKey,
+      BigInt(1000000000), // 1 billion tokens
+      [],
+      TOKEN_PROGRAM_ID
+    );
+
+    await sendTransaction(svm, authorityKeypair, [mintToIx]);
   });
 
 
@@ -77,12 +131,21 @@ describe("claim", () => {
     const deadline = BigInt(9999999999); // Far future deadline
     const nonce = BigInt(1);
 
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
       partner: partnerKeypair.publicKey.toBytes(),
       amount: BigInt(claimAmount),
       deadline,
       nonce,
+      project_nonce: projectNonce,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -91,22 +154,31 @@ describe("claim", () => {
     );
 
     const claimIx = await program.methods
-      .claim()
+      .claim(new anchor.BN(projectNonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
         expectedDistributor: distributorKeypair.publicKey,
+        project: projectPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
         instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       })
       .instruction();
 
+    const balanceBefore = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
     const { signature, logs } = await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
+    const balanceAfter = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
+
     expect(signature).to.exist;
+    expect(balanceAfter - balanceBefore).to.equal(BigInt(claimAmount));
     
     // Verify the logged fields
     expect(logs.some(log => log.includes("Airdrop Message Fields:"))).to.be.true;
     expect(logs.some(log => log.includes(`Recipient: ${recipientKeypair.publicKey.toBase58()}`))).to.be.true;
     expect(logs.some(log => log.includes(`Amount: ${claimAmount}`))).to.be.true;
     expect(logs.some(log => log.includes(`Partner: ${partnerKeypair.publicKey.toBase58()}`))).to.be.true;
+    expect(logs.some(log => log.includes(`Successfully transferred ${claimAmount} tokens to recipient`))).to.be.true;
   });
 
   it("Fails when Ed25519 instruction is not first", async () => {
@@ -114,15 +186,26 @@ describe("claim", () => {
     const deadline = BigInt(9999999999); // Far future deadline
     const nonce = BigInt(2);
 
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
     const claimIx = await program.methods
-      .claim()
+      .claim(new anchor.BN(projectNonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
         expectedDistributor: distributorKeypair.publicKey,
+        project: projectPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
         instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       })
       .instruction();
-
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
@@ -130,13 +213,13 @@ describe("claim", () => {
       amount: BigInt(claimAmount),
       deadline,
       nonce,
+      project_nonce: projectNonce,
     });
 
     const ed25519Ix = createEd25519Instruction(
       distributorKeypair,
       Buffer.from(serialize(AirdropMessage.schema, msg))
     );
-
 
     try {
       // Create transaction with claim first, then Ed25519 (wrong order)
@@ -152,12 +235,21 @@ describe("claim", () => {
     const deadline = BigInt(9999999999); // Far future deadline
     const nonce = BigInt(3);
 
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
       partner: partnerKeypair.publicKey.toBytes(),
       amount: BigInt(claimAmount),
       deadline,
       nonce,
+      project_nonce: projectNonce,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -166,14 +258,17 @@ describe("claim", () => {
     );
 
     const claimIx = await program.methods
-      .claim()
+      .claim(new anchor.BN(projectNonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
         expectedDistributor: distributorKeypair.publicKey, // But we expect the correct one
+        project: projectPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
         instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       })
       .instruction();
-
 
     try {
       await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
@@ -189,6 +284,13 @@ describe("claim", () => {
     const nonce = BigInt(4);
     const wrongRecipient = Keypair.generate();
 
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
 
     const msg = new AirdropMessage({
       recipient: wrongRecipient.publicKey.toBytes(),
@@ -196,6 +298,7 @@ describe("claim", () => {
       amount: BigInt(claimAmount),
       deadline,
       nonce,
+      project_nonce: projectNonce,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -204,10 +307,14 @@ describe("claim", () => {
     );
 
     const claimIx = await program.methods
-      .claim()
+      .claim(new anchor.BN(projectNonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
         expectedDistributor: distributorKeypair.publicKey,
+        project: projectPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
         instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       })
       .instruction();
@@ -225,6 +332,13 @@ describe("claim", () => {
     const deadline = BigInt(9999999999); // Far future deadline
     const nonce = BigInt(5);
 
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
@@ -232,6 +346,7 @@ describe("claim", () => {
       amount: BigInt(claimAmount),
       deadline,
       nonce,
+      project_nonce: projectNonce,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -241,20 +356,28 @@ describe("claim", () => {
 
     // First claim instruction (valid)
     const claimIx1 = await program.methods
-      .claim()
+      .claim(new anchor.BN(projectNonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
         expectedDistributor: distributorKeypair.publicKey,
+        project: projectPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
         instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       })
       .instruction();
 
     // Second claim instruction (tries to reuse the same Ed25519)
     const claimIx2 = await program.methods
-      .claim()
+      .claim(new anchor.BN(projectNonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
         expectedDistributor: distributorKeypair.publicKey,
+        project: projectPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
         instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       })
       .instruction();
@@ -274,6 +397,14 @@ describe("claim", () => {
     const deadline = BigInt(1000); // Set deadline to unix timestamp 1000
     const nonce = BigInt(6);
 
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
     // Set the clock to a time after the deadline
     const currentClock = svm.getClock();
     const expiredClock = new Clock(
@@ -291,6 +422,7 @@ describe("claim", () => {
       amount: BigInt(claimAmount),
       deadline,
       nonce,
+      project_nonce: projectNonce,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -299,10 +431,14 @@ describe("claim", () => {
     );
 
     const claimIx = await program.methods
-      .claim()
+      .claim(new anchor.BN(projectNonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
         expectedDistributor: distributorKeypair.publicKey,
+        project: projectPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
         instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
       })
       .instruction();

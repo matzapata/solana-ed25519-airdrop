@@ -16,4 +16,8 @@ pub enum AirdropError {
     InvalidMessage,
     #[msg("Signature deadline has expired")]
     DeadlineExpired,
+    #[msg("Project nonce mismatch")]
+    ProjectMismatch,
+    #[msg("Mint mismatch")]
+    MintMismatch,
 }
