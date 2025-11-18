@@ -7,7 +7,7 @@ import * as nacl from "tweetnacl";
 import { LiteSVM, } from "litesvm";
 import { fromWorkspace, LiteSVMProvider } from 'anchor-litesvm';
 import { sendTransaction } from "../utils/svm";
-import { serialize } from "borsh";
+import { Schema as BorshSchema, serialize } from "borsh";
 
 // Define the message structure for Borsh serialization
 class AirdropMessage {
@@ -20,7 +20,7 @@ class AirdropMessage {
   }
 
   // Borsh schema definition
-  static schema = {
+  static schema: BorshSchema = {
     struct: {
       recipient: { array: { type: 'u8', len: 32 } },
       amount: 'u64',

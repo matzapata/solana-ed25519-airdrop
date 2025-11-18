@@ -130,7 +130,7 @@ pub fn parse_ed25519_ix_data(data: &[u8]) -> Result<Ed25519SignatureOffsets> {
 }
 
 /// Extracts the public key from Ed25519 instruction data at the specified offset
-pub fn extract_pubkey(data: &[u8], offsets: &Ed25519SignatureOffsets) -> Result<Pubkey> {
+pub fn extract_signer_pubkey(data: &[u8], offsets: &Ed25519SignatureOffsets) -> Result<Pubkey> {
     let pk_slice = &data[offsets.public_key_offset..offsets.public_key_offset + PUBKEY_LEN];
     let mut pk_arr = [0u8; 32];
     pk_arr.copy_from_slice(pk_slice);
@@ -138,14 +138,13 @@ pub fn extract_pubkey(data: &[u8], offsets: &Ed25519SignatureOffsets) -> Result<
 }
 
 /// Extracts the message data from Ed25519 instruction data at the specified offset
-pub fn extract_message<'a>(data: &'a [u8], offsets: &Ed25519SignatureOffsets) -> &'a [u8] {
+pub fn extract_signed_message<'a>(data: &'a [u8], offsets: &Ed25519SignatureOffsets) -> &'a [u8] {
     &data[offsets.message_data_offset..offsets.message_data_offset + offsets.message_data_size]
 }
 
 /// Validates and parses an Ed25519 signature, returning the signed message
 pub fn verify_ed25519_signature(
     ix_sysvar_account: &AccountInfo,
-    expected_message_len: usize,
 ) -> Result<(Pubkey, Vec<u8>)> {
     // Get current instruction index
     let current_ix_index = ix_sysvar::load_current_index_checked(ix_sysvar_account)
@@ -157,15 +156,9 @@ pub fn verify_ed25519_signature(
     // Parse the Ed25519 instruction data
     let offsets = parse_ed25519_ix_data(&ed_ix.data)?;
 
-    // Verify expected message length
-    require!(
-        offsets.message_data_size == expected_message_len,
-        AirdropError::InvalidInstructionSysvar
-    );
-
     // Extract the public key and message
-    let pubkey = extract_pubkey(&ed_ix.data, &offsets)?;
-    let message = extract_message(&ed_ix.data, &offsets).to_vec();
+    let pubkey = extract_signer_pubkey(&ed_ix.data, &offsets)?;
+    let message = extract_signed_message(&ed_ix.data, &offsets).to_vec();
 
     Ok((pubkey, message))
 }

@@ -40,14 +40,11 @@ pub struct Claim<'info> {
 
 impl<'info> Claim<'info> {
     pub fn claim(&self) -> Result<()> {
-        // Expected message length: [recipient(32) + amount(8)]
-        const MSG_LEN: usize = 40;
-
         // Load the instruction sysvar account (holds all tx instructions)
         let ix_sysvar_account = self.instruction_sysvar.to_account_info();
 
         // Verify the Ed25519 signature and extract the signed message
-        let (distributor_pubkey, message) = verify_ed25519_signature(&ix_sysvar_account, MSG_LEN)?;
+        let (distributor_pubkey, message) = verify_ed25519_signature(&ix_sysvar_account)?;
 
         // Validate the distributor's public key
         require!(
