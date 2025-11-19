@@ -15,9 +15,10 @@ use borsh::BorshDeserialize;
 #[derive(BorshDeserialize)]
 pub struct AirdropMessage {
     pub recipient: Pubkey,
-    pub partner: Pubkey,
+    pub mint: Pubkey,
     pub project_nonce: u64,
     pub amount: u64,
+    
     pub program_id: Pubkey,
     pub version: u8,
     pub nonce: u64,
@@ -101,7 +102,7 @@ impl<'info> Claim<'info> {
 
         // Validate the distributor's public key
         require!(
-            distributor_pubkey == self.expected_distributor.key(),
+            distributor_pubkey == self.expected_distributor.key(), // TODO: this should come from global config
             AirdropError::DistributorMismatch
         );
 
@@ -139,19 +140,13 @@ impl<'info> Claim<'info> {
             AirdropError::VersionMismatch
         );
 
-        // Validate the mint matches the project's mint
-        require!(
-            self.project.mint == self.mint.key(),
-            AirdropError::MintMismatch
-        );
-
         // Validate the deadline hasn't expired
         let clock = Clock::get()?;
         require!(
             clock.unix_timestamp <= airdrop_msg.deadline,
             AirdropError::DeadlineExpired
         );
-
+        
         // Initialize the nullifier to mark this nonce as used
         // If this nonce was already used, the init constraint above would have failed
         self.nullifier.set_inner(ClaimNullifier {
@@ -161,11 +156,26 @@ impl<'info> Claim<'info> {
             used_at: clock.unix_timestamp,
         });
 
+        // Mint validations and transfers
+
+        // Validate the mint in the message matches the provided mint account
+        require!(
+            airdrop_msg.mint == self.mint.key(),
+            AirdropError::MintMismatch
+        );
+
+        // Validate the mint matches the project's mint
+        require!(
+            self.project.mint == self.mint.key(),
+            AirdropError::MintMismatch
+        );
+
+   
         // Log all fields
         msg!("Airdrop Message Fields:");
         msg!("  Recipient: {}", airdrop_msg.recipient);
         msg!("  Amount: {}", airdrop_msg.amount);
-        msg!("  Partner: {}", airdrop_msg.partner);
+        msg!("  Mint: {}", airdrop_msg.mint);
         msg!("  Deadline: {}", airdrop_msg.deadline);
         msg!("  Nonce: {}", airdrop_msg.nonce);
         msg!("  Project Nonce: {}", airdrop_msg.project_nonce);

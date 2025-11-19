@@ -14,7 +14,7 @@ import { createMintToInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID, A
 // Define the message structure for Borsh serialization
 class AirdropMessage {
   recipient: Uint8Array;
-  partner: Uint8Array;
+  mint: Uint8Array;
   project_nonce: bigint;
   amount: bigint;
   program_id: Uint8Array;
@@ -22,9 +22,9 @@ class AirdropMessage {
   nonce: bigint;
   deadline: bigint;
 
-  constructor(fields: { recipient: Uint8Array; partner: Uint8Array; project_nonce: bigint; amount: bigint; program_id: Uint8Array; version: number; nonce: bigint; deadline: bigint }) {
+  constructor(fields: { recipient: Uint8Array; mint: Uint8Array; project_nonce: bigint; amount: bigint; program_id: Uint8Array; version: number; nonce: bigint; deadline: bigint }) {
     this.recipient = fields.recipient;
-    this.partner = fields.partner;
+    this.mint = fields.mint;
     this.project_nonce = fields.project_nonce;
     this.amount = fields.amount;
     this.program_id = fields.program_id;
@@ -37,7 +37,7 @@ class AirdropMessage {
   static schema: BorshSchema = {
     struct: {
       recipient: { array: { type: 'u8', len: 32 } },
-      partner: { array: { type: 'u8', len: 32 } },
+      mint: { array: { type: 'u8', len: 32 } },
       project_nonce: 'u64',
       amount: 'u64',
       program_id: { array: { type: 'u8', len: 32 } },
@@ -161,7 +161,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: program.programId.toBytes(),
@@ -200,7 +200,7 @@ describe("claim", () => {
     expect(logs.some(log => log.includes("Airdrop Message Fields:"))).to.be.true;
     expect(logs.some(log => log.includes(`Recipient: ${recipientKeypair.publicKey.toBase58()}`))).to.be.true;
     expect(logs.some(log => log.includes(`Amount: ${claimAmount}`))).to.be.true;
-    expect(logs.some(log => log.includes(`Partner: ${partnerKeypair.publicKey.toBase58()}`))).to.be.true;
+    expect(logs.some(log => log.includes(`Mint: ${mint.toBase58()}`))).to.be.true;
     expect(logs.some(log => log.includes(`Successfully transferred ${claimAmount} tokens to recipient`))).to.be.true;
   });
 
@@ -235,7 +235,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: program.programId.toBytes(),
@@ -275,7 +275,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: program.programId.toBytes(),
@@ -329,7 +329,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: wrongRecipient.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: program.programId.toBytes(),
@@ -383,7 +383,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: wrongProgramId.publicKey.toBytes(), // Wrong program_id
@@ -436,7 +436,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: program.programId.toBytes(),
@@ -489,7 +489,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: program.programId.toBytes(),
@@ -573,7 +573,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: program.programId.toBytes(),
@@ -626,7 +626,7 @@ describe("claim", () => {
 
     const msg = new AirdropMessage({
       recipient: recipientKeypair.publicKey.toBytes(),
-      partner: partnerKeypair.publicKey.toBytes(),
+      mint: mint.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
       program_id: program.programId.toBytes(),
