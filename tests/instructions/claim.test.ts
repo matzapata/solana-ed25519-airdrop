@@ -17,16 +17,20 @@ class AirdropMessage {
   partner: Uint8Array;
   project_nonce: bigint;
   amount: bigint;
-  deadline: bigint;
+  program_id: Uint8Array;
+  version: number;
   nonce: bigint;
+  deadline: bigint;
 
-  constructor(fields: { recipient: Uint8Array; partner: Uint8Array; project_nonce: bigint; amount: bigint; deadline: bigint; nonce: bigint }) {
+  constructor(fields: { recipient: Uint8Array; partner: Uint8Array; project_nonce: bigint; amount: bigint; program_id: Uint8Array; version: number; nonce: bigint; deadline: bigint }) {
     this.recipient = fields.recipient;
     this.partner = fields.partner;
     this.project_nonce = fields.project_nonce;
     this.amount = fields.amount;
-    this.deadline = fields.deadline;
+    this.program_id = fields.program_id;
+    this.version = fields.version;
     this.nonce = fields.nonce;
+    this.deadline = fields.deadline;
   }
 
   // Borsh schema definition
@@ -36,8 +40,10 @@ class AirdropMessage {
       partner: { array: { type: 'u8', len: 32 } },
       project_nonce: 'u64',
       amount: 'u64',
-      deadline: 'i64',
+      program_id: { array: { type: 'u8', len: 32 } },
+      version: 'u8',
       nonce: 'u64',
+      deadline: 'i64',
     }
   };
 }
@@ -158,8 +164,10 @@ describe("claim", () => {
       partner: partnerKeypair.publicKey.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
-      deadline,
+      program_id: program.programId.toBytes(),
+      version: 1,
       nonce,
+      deadline,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -230,8 +238,10 @@ describe("claim", () => {
       partner: partnerKeypair.publicKey.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
-      deadline,
+      program_id: program.programId.toBytes(),
+      version: 1,
       nonce,
+      deadline,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -268,8 +278,10 @@ describe("claim", () => {
       partner: partnerKeypair.publicKey.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
-      deadline,
+      program_id: program.programId.toBytes(),
+      version: 1,
       nonce,
+      deadline,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -320,8 +332,10 @@ describe("claim", () => {
       partner: partnerKeypair.publicKey.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
-      deadline,
+      program_id: program.programId.toBytes(),
+      version: 1,
       nonce,
+      deadline,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -351,6 +365,113 @@ describe("claim", () => {
     }
   });
 
+  it("Fails with program_id mismatch", async () => {
+    const claimAmount = 1000000;
+    const deadline = BigInt(9999999999); // Far future deadline
+    const nonce = BigInt(50);
+    const wrongProgramId = Keypair.generate(); // Random pubkey as wrong program_id
+
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    const nullifierPda = getNullifierPda(nonce);
+
+    const msg = new AirdropMessage({
+      recipient: recipientKeypair.publicKey.toBytes(),
+      partner: partnerKeypair.publicKey.toBytes(),
+      project_nonce: projectNonce,
+      amount: BigInt(claimAmount),
+      program_id: wrongProgramId.publicKey.toBytes(), // Wrong program_id
+      version: 1,
+      nonce,
+      deadline,
+    });
+
+    const ed25519Ix = createEd25519Instruction(
+      distributorKeypair,
+      Buffer.from(serialize(AirdropMessage.schema, msg))
+    );
+
+    const claimIx = await program.methods
+      .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
+      .accountsPartial({
+        recipient: recipientKeypair.publicKey,
+        expectedDistributor: distributorKeypair.publicKey,
+        project: projectPda,
+        nullifier: nullifierPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
+        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+      })
+      .instruction();
+
+    try {
+      await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
+      expect.fail("Should have failed with program_id mismatch");
+    } catch (error) {
+      expect(error.message).to.include("ProgramIdMismatch");
+    }
+  });
+
+  it("Fails with version mismatch", async () => {
+    const claimAmount = 1000000;
+    const deadline = BigInt(9999999999); // Far future deadline
+    const nonce = BigInt(51);
+
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    const nullifierPda = getNullifierPda(nonce);
+
+    const msg = new AirdropMessage({
+      recipient: recipientKeypair.publicKey.toBytes(),
+      partner: partnerKeypair.publicKey.toBytes(),
+      project_nonce: projectNonce,
+      amount: BigInt(claimAmount),
+      program_id: program.programId.toBytes(),
+      version: 2, // Wrong version (expected 1)
+      nonce,
+      deadline,
+    });
+
+    const ed25519Ix = createEd25519Instruction(
+      distributorKeypair,
+      Buffer.from(serialize(AirdropMessage.schema, msg))
+    );
+
+    const claimIx = await program.methods
+      .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
+      .accountsPartial({
+        recipient: recipientKeypair.publicKey,
+        expectedDistributor: distributorKeypair.publicKey,
+        project: projectPda,
+        nullifier: nullifierPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
+        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+      })
+      .instruction();
+
+    try {
+      await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
+      expect.fail("Should have failed with version mismatch");
+    } catch (error) {
+      expect(error.message).to.include("VersionMismatch");
+    }
+  });
+
   it("Fails when multiple claim instructions try to reuse the same Ed25519 signature", async () => {
     const claimAmount = 1000000;
     const deadline = BigInt(9999999999); // Far future deadline
@@ -371,8 +492,10 @@ describe("claim", () => {
       partner: partnerKeypair.publicKey.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
-      deadline,
+      program_id: program.programId.toBytes(),
+      version: 1,
       nonce,
+      deadline,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -453,8 +576,10 @@ describe("claim", () => {
       partner: partnerKeypair.publicKey.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
-      deadline,
+      program_id: program.programId.toBytes(),
+      version: 1,
       nonce,
+      deadline,
     });
 
     const ed25519Ix = createEd25519Instruction(
@@ -504,8 +629,10 @@ describe("claim", () => {
       partner: partnerKeypair.publicKey.toBytes(),
       project_nonce: projectNonce,
       amount: BigInt(claimAmount),
-      deadline,
+      program_id: program.programId.toBytes(),
+      version: 1,
       nonce,
+      deadline,
     });
 
     const ed25519Ix = createEd25519Instruction(

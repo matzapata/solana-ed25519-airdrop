@@ -22,4 +22,8 @@ pub enum AirdropError {
     MintMismatch,
     #[msg("Nonce mismatch - signature replay attack detected")]
     NonceMismatch,
+    #[msg("Program ID mismatch")]
+    ProgramIdMismatch,
+    #[msg("Version mismatch")]
+    VersionMismatch,
 }

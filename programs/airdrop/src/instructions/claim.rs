@@ -18,9 +18,10 @@ pub struct AirdropMessage {
     pub partner: Pubkey,
     pub project_nonce: u64,
     pub amount: u64,
-    
-    pub deadline: i64,
+    pub program_id: Pubkey,
+    pub version: u8,
     pub nonce: u64,
+    pub deadline: i64,
 }
 
 //////////////////////////////// INSTRUCTIONS ////////////////////////////////
@@ -124,6 +125,18 @@ impl<'info> Claim<'info> {
         require!(
             airdrop_msg.project_nonce == project_nonce,
             AirdropError::ProjectMismatch
+        );
+
+        // Validate the program_id matches
+        require!(
+            airdrop_msg.program_id == crate::ID,
+            AirdropError::ProgramIdMismatch
+        );
+
+        // Validate the version matches (currently version 1)
+        require!(
+            airdrop_msg.version == 1,
+            AirdropError::VersionMismatch
         );
 
         // Validate the mint matches the project's mint
