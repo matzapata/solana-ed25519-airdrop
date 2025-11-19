@@ -1,4 +1,4 @@
-use crate::{utils::*, state::*, errors::*, constants::*};
+use crate::{constants::*, errors::*, state::*, utils::*};
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{sysvar::instructions as ix_sysvar, sysvar::SysvarId};
 use anchor_spl::{
@@ -9,31 +9,20 @@ use borsh::BorshDeserialize;
 
 //////////////////////////////// MESSAGE ////////////////////////////////
 
+/// Domain-specific fields for airdrop claims
 #[derive(BorshDeserialize)]
-pub struct AirdropMessage {
+pub struct AirdropMessageData {
     pub recipient: Pubkey,
     pub mint: Pubkey,
     pub project_nonce: u64,
     pub amount: u64,
-
-    pub program_id: Pubkey,
-    pub version: u8,
-    pub nonce: u64,
-    pub deadline: i64,
 }
 
-impl SignedMessage for AirdropMessage {
-    fn program_id(&self) -> Pubkey {
-        self.program_id
-    }
-
-    fn version(&self) -> u8 {
-        self.version
-    }
-
-    fn deadline(&self) -> i64 {
-        self.deadline
-    }
+/// Complete airdrop message with domain data and metadata
+#[derive(BorshDeserialize)]
+pub struct AirdropMessage {
+    pub data: AirdropMessageData,
+    pub domain: MessageDomain,
 }
 
 //////////////////////////////// INSTRUCTIONS ////////////////////////////////
@@ -122,33 +111,26 @@ impl<'info> Claim<'info> {
             AirdropMessage::try_from_slice(&message).map_err(|_| AirdropError::InvalidMessage)?;
 
         // Validate generic signed message fields (program_id, version, deadline)
-        validate_signed_message(&airdrop_msg)?;
+        validate_message_domain(&airdrop_msg.domain, nonce)?;
 
         // Initialize the nullifier to mark this nonce as used
         // If this nonce was already used, the init constraint above would have failed
         self.nullifier.set_inner(ClaimNullifier { nonce });
 
-        // Validate signature matches with params
+        // Validate data
 
-        require!(airdrop_msg.nonce == nonce, AirdropError::NonceMismatch);
         require!(
-            airdrop_msg.project_nonce == project_nonce,
+            airdrop_msg.data.project_nonce == project_nonce,
             AirdropError::ProjectMismatch
         );
         require!(
-            airdrop_msg.recipient == self.recipient.key(),
+            airdrop_msg.data.recipient == self.recipient.key(),
             AirdropError::RecipientMismatch
         );
-
-        // Mint validations and transfers
-
-        // Validate the mint in the message matches the provided mint account
         require!(
-            airdrop_msg.mint == self.mint.key(),
+            airdrop_msg.data.mint == self.mint.key(),
             AirdropError::MintMismatch
         );
-
-        // Validate the mint matches the project's mint
         require!(
             self.project.mint == self.mint.key(),
             AirdropError::MintMismatch
@@ -156,12 +138,12 @@ impl<'info> Claim<'info> {
 
         // Log all fields
         msg!("Airdrop Message Fields:");
-        msg!("  Recipient: {}", airdrop_msg.recipient);
-        msg!("  Amount: {}", airdrop_msg.amount);
-        msg!("  Mint: {}", airdrop_msg.mint);
-        msg!("  Deadline: {}", airdrop_msg.deadline);
-        msg!("  Nonce: {}", airdrop_msg.nonce);
-        msg!("  Project Nonce: {}", airdrop_msg.project_nonce);
+        msg!("  Recipient: {}", airdrop_msg.data.recipient);
+        msg!("  Amount: {}", airdrop_msg.data.amount);
+        msg!("  Mint: {}", airdrop_msg.data.mint);
+        msg!("  Deadline: {}", airdrop_msg.domain.deadline);
+        msg!("  Nonce: {}", airdrop_msg.domain.nonce);
+        msg!("  Project Nonce: {}", airdrop_msg.data.project_nonce);
 
         // Transfer tokens from project to recipient
         let nonce_bytes = project_nonce.to_le_bytes();
@@ -174,13 +156,13 @@ impl<'info> Claim<'info> {
             self.project.to_account_info(),
             self.project_token_account.to_account_info(),
             self.recipient_token_account.to_account_info(),
-            airdrop_msg.amount,
+            airdrop_msg.data.amount,
             Some(signer_seeds),
         )?;
 
         msg!(
             "Successfully transferred {} tokens to recipient",
-            airdrop_msg.amount
+            airdrop_msg.data.amount
         );
 
         Ok(())

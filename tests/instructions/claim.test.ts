@@ -12,38 +12,70 @@ import { createSplToken, getSplTokenBalance } from "../utils/spl";
 import { createMintToInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 // Define the message structure for Borsh serialization
-class AirdropMessage {
+
+// Airdrop-specific data fields
+class AirdropMessageData {
   recipient: Uint8Array;
   mint: Uint8Array;
   project_nonce: bigint;
   amount: bigint;
-  program_id: Uint8Array;
-  version: number;
-  nonce: bigint;
-  deadline: bigint;
 
-  constructor(fields: { recipient: Uint8Array; mint: Uint8Array; project_nonce: bigint; amount: bigint; program_id: Uint8Array; version: number; nonce: bigint; deadline: bigint }) {
+  constructor(fields: { recipient: Uint8Array; mint: Uint8Array; project_nonce: bigint; amount: bigint }) {
     this.recipient = fields.recipient;
     this.mint = fields.mint;
     this.project_nonce = fields.project_nonce;
     this.amount = fields.amount;
-    this.program_id = fields.program_id;
-    this.version = fields.version;
-    this.nonce = fields.nonce;
-    this.deadline = fields.deadline;
   }
 
-  // Borsh schema definition
   static schema: BorshSchema = {
     struct: {
       recipient: { array: { type: 'u8', len: 32 } },
       mint: { array: { type: 'u8', len: 32 } },
       project_nonce: 'u64',
       amount: 'u64',
+    }
+  };
+}
+
+// Generic domain fields for signed messages
+class MessageDomain {
+  program_id: Uint8Array;
+  version: number;
+  nonce: bigint;
+  deadline: bigint;
+
+  constructor(fields: { program_id: Uint8Array; version: number; nonce: bigint; deadline: bigint }) {
+    this.program_id = fields.program_id;
+    this.version = fields.version;
+    this.nonce = fields.nonce;
+    this.deadline = fields.deadline;
+  }
+
+  static schema: BorshSchema = {
+    struct: {
       program_id: { array: { type: 'u8', len: 32 } },
       version: 'u8',
       nonce: 'u64',
       deadline: 'i64',
+    }
+  };
+}
+
+// Complete airdrop message
+class AirdropMessage {
+  data: AirdropMessageData;
+  domain: MessageDomain;
+
+  constructor(fields: { data: AirdropMessageData; domain: MessageDomain }) {
+    this.data = fields.data;
+    this.domain = fields.domain;
+  }
+
+  // Borsh schema definition
+  static schema: BorshSchema = {
+    struct: {
+      data: AirdropMessageData.schema,
+      domain: MessageDomain.schema,
     }
   };
 }
@@ -77,6 +109,34 @@ describe("claim", () => {
       ],
       program.programId
     )[0];
+  };
+
+  // Helper function to create airdrop message
+  const createAirdropMessage = (params: {
+    recipient: PublicKey;
+    mint: PublicKey;
+    projectNonce: bigint;
+    amount: bigint;
+    programId: PublicKey;
+    version: number;
+    nonce: bigint;
+    deadline: bigint;
+  }) => {
+    const data = new AirdropMessageData({
+      recipient: params.recipient.toBytes(),
+      mint: params.mint.toBytes(),
+      project_nonce: params.projectNonce,
+      amount: params.amount,
+    });
+
+    const domain = new MessageDomain({
+      program_id: params.programId.toBytes(),
+      version: params.version,
+      nonce: params.nonce,
+      deadline: params.deadline,
+    });
+
+    return new AirdropMessage({ data, domain });
   };
 
   before(async () => {
@@ -159,12 +219,12 @@ describe("claim", () => {
 
     const nullifierPda = getNullifierPda(nonce);
 
-    const msg = new AirdropMessage({
-      recipient: recipientKeypair.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: program.programId.toBytes(),
+      programId: program.programId,
       version: 1,
       nonce,
       deadline,
@@ -233,12 +293,12 @@ describe("claim", () => {
       })
       .instruction();
 
-    const msg = new AirdropMessage({
-      recipient: recipientKeypair.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: program.programId.toBytes(),
+      programId: program.programId,
       version: 1,
       nonce,
       deadline,
@@ -273,12 +333,12 @@ describe("claim", () => {
 
     const nullifierPda = getNullifierPda(nonce);
 
-    const msg = new AirdropMessage({
-      recipient: recipientKeypair.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: program.programId.toBytes(),
+      programId: program.programId,
       version: 1,
       nonce,
       deadline,
@@ -327,12 +387,12 @@ describe("claim", () => {
 
     const nullifierPda = getNullifierPda(nonce);
 
-    const msg = new AirdropMessage({
-      recipient: wrongRecipient.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: wrongRecipient.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: program.programId.toBytes(),
+      programId: program.programId,
       version: 1,
       nonce,
       deadline,
@@ -381,12 +441,12 @@ describe("claim", () => {
 
     const nullifierPda = getNullifierPda(nonce);
 
-    const msg = new AirdropMessage({
-      recipient: recipientKeypair.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: wrongProgramId.publicKey.toBytes(), // Wrong program_id
+      programId: wrongProgramId.publicKey, // Wrong program_id
       version: 1,
       nonce,
       deadline,
@@ -434,12 +494,12 @@ describe("claim", () => {
 
     const nullifierPda = getNullifierPda(nonce);
 
-    const msg = new AirdropMessage({
-      recipient: recipientKeypair.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: program.programId.toBytes(),
+      programId: program.programId,
       version: 2, // Wrong version (expected 1)
       nonce,
       deadline,
@@ -487,12 +547,12 @@ describe("claim", () => {
 
     const nullifierPda = getNullifierPda(nonce);
 
-    const msg = new AirdropMessage({
-      recipient: recipientKeypair.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: program.programId.toBytes(),
+      programId: program.programId,
       version: 1,
       nonce,
       deadline,
@@ -571,12 +631,12 @@ describe("claim", () => {
     );
     svm.setClock(expiredClock);
 
-    const msg = new AirdropMessage({
-      recipient: recipientKeypair.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: program.programId.toBytes(),
+      programId: program.programId,
       version: 1,
       nonce,
       deadline,
@@ -624,12 +684,12 @@ describe("claim", () => {
 
     const nullifierPda = getNullifierPda(nonce);
 
-    const msg = new AirdropMessage({
-      recipient: recipientKeypair.publicKey.toBytes(),
-      mint: mint.toBytes(),
-      project_nonce: projectNonce,
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
       amount: BigInt(claimAmount),
-      program_id: program.programId.toBytes(),
+      programId: program.programId,
       version: 1,
       nonce,
       deadline,
