@@ -93,6 +93,9 @@ describe("claim", () => {
   let partnerKeypair: Keypair;
   let authorityKeypair: Keypair;
 
+  // Global config
+  let globalConfigPda: PublicKey;
+
   // Project and token accounts
   let projectNonce: bigint;
   let projectPda: PublicKey;
@@ -160,6 +163,21 @@ describe("claim", () => {
     await svm.airdrop(invalidDistributorKeypair.publicKey, BigInt(10000000000));
     await svm.airdrop(partnerKeypair.publicKey, BigInt(10000000000));
     await svm.airdrop(authorityKeypair.publicKey, BigInt(10000000000));
+
+    // Initialize global config
+    [globalConfigPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("global_config")],
+      program.programId
+    );
+
+    await program.methods
+      .createGlobalConfig(distributorKeypair.publicKey)
+      .accountsPartial({
+        authority: authorityKeypair.publicKey,
+        globalConfig: globalConfigPda,
+      })
+      .signers([authorityKeypair])
+      .rpc();
 
     // Create SPL token mint
     mint = await createSplToken(provider, authorityKeypair, 9);
@@ -239,7 +257,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -283,7 +301,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -353,7 +371,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey, // But we expect the correct one
+        globalConfig: globalConfigPda, // But we expect the correct one
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -407,7 +425,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -461,7 +479,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -514,7 +532,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -568,7 +586,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -583,7 +601,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -651,7 +669,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -704,7 +722,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
@@ -730,7 +748,7 @@ describe("claim", () => {
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        expectedDistributor: distributorKeypair.publicKey,
+        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,

@@ -34,9 +34,12 @@ pub struct Claim<'info> {
     #[account(mut)]
     pub recipient: Signer<'info>,
 
-    /// Expected distributor pubkey (checked against signed message, not Anchor)
-    /// CHECK: Validated manually against the parsed message
-    pub expected_distributor: UncheckedAccount<'info>,
+    /// The global config PDA containing the distributor public key
+    #[account(
+        seeds = [GLOBAL_CONFIG_SEED],
+        bump
+    )]
+    pub global_config: Account<'info, GlobalConfig>,
 
     /// The project PDA from which tokens will be claimed
     #[account(
@@ -52,7 +55,7 @@ pub struct Claim<'info> {
         payer = recipient,
         space = ClaimNullifier::DISCRIMINATOR.len() + ClaimNullifier::INIT_SPACE,
         seeds = [
-            NULLIFIER_SEED_PREFIX,
+            CLAIM_NULLIFIER_SEED_PREFIX,
             project.key().as_ref(),
             nonce.to_le_bytes().as_ref(),
         ],
@@ -100,9 +103,9 @@ impl<'info> Claim<'info> {
         // Verify the Ed25519 signature and extract the signed message
         let (distributor_pubkey, message) = verify_ed25519_signature(&ix_sysvar_account)?;
 
-        // Validate the distributor's public key
+        // Validate the distributor's public key against global config
         require!(
-            distributor_pubkey == self.expected_distributor.key(), // TODO: this should come from global config
+            distributor_pubkey == self.global_config.distributor,
             AirdropError::DistributorMismatch
         );
 
