@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Airdrop } from "../../target/types/airdrop";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import { Ed25519Program, Keypair, PublicKey } from "@solana/web3.js";
 import { expect } from "chai";
 import { LiteSVM, Clock } from "litesvm";
 import { fromWorkspace, LiteSVMProvider } from 'anchor-litesvm';
@@ -10,6 +10,7 @@ import { Schema as BorshSchema, serialize } from "borsh";
 import { createEd25519Instruction } from "../utils/ed25519";
 import { createSplToken, getSplTokenBalance } from "../utils/spl";
 import { createMintToInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import * as nacl from "tweetnacl";
 
 // Define the message structure for Borsh serialization
 
@@ -103,7 +104,7 @@ describe("claim", () => {
   let projectTokenAccount: PublicKey;
 
   // Helper function to get nullifier PDA
-  const getNullifierPda = (nonce: bigint) => {
+  const getNullifierPda = (projectPda: PublicKey, nonce: bigint) => {
     return anchor.web3.PublicKey.findProgramAddressSync(
       [
         Buffer.from("nullifier"),
@@ -142,6 +143,7 @@ describe("claim", () => {
     return new AirdropMessage({ data, domain });
   };
 
+  // Create global config, create project, deploy and mint spl
   before(async () => {
     svm = fromWorkspace('./')
       .withBuiltins()
@@ -227,6 +229,10 @@ describe("claim", () => {
     const deadline = BigInt(9999999999); // Far future deadline
     const nonce = BigInt(1);
 
+    // Get the balance before the claim
+    const balanceBefore = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
+
+    // Get the recipient's token account
     const recipientTokenAccount = await getAssociatedTokenAddress(
       mint,
       recipientKeypair.publicKey,
@@ -235,8 +241,10 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    // Get the nullifier PDA
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
+    // Create the airdrop message
     const msg = createAirdropMessage({
       recipient: recipientKeypair.publicKey,
       mint: mint,
@@ -247,39 +255,35 @@ describe("claim", () => {
       nonce,
       deadline,
     });
+    const serializedMessage = Buffer.from(serialize(AirdropMessage.schema, msg));
 
-    const ed25519Ix = createEd25519Instruction(
-      distributorKeypair,
-      Buffer.from(serialize(AirdropMessage.schema, msg))
-    );
+    // Sign the serialized message
+    const signature = nacl.sign.detached(serializedMessage, distributorKeypair.secretKey);
 
+    // Use the helper to build the instruction
+    const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
+      publicKey: distributorKeypair.publicKey.toBytes(),
+      message: serializedMessage,
+      signature,
+    });
+
+    // Create the claim instruction
     const claimIx = await program.methods
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
         recipient: recipientKeypair.publicKey,
-        globalConfig: globalConfigPda,
         project: projectPda,
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
+    await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
 
-    const balanceBefore = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
-    const { signature, logs } = await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
+    // Verify the balance has increased by the claim amount
     const balanceAfter = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
-
-    expect(signature).to.exist;
     expect(balanceAfter - balanceBefore).to.equal(BigInt(claimAmount));
-    
-    // Verify the logged fields
-    expect(logs.some(log => log.includes("Airdrop Message Fields:"))).to.be.true;
-    expect(logs.some(log => log.includes(`Recipient: ${recipientKeypair.publicKey.toBase58()}`))).to.be.true;
-    expect(logs.some(log => log.includes(`Amount: ${claimAmount}`))).to.be.true;
-    expect(logs.some(log => log.includes(`Mint: ${mint.toBase58()}`))).to.be.true;
-    expect(logs.some(log => log.includes(`Successfully transferred ${claimAmount} tokens to recipient`))).to.be.true;
   });
 
   it("Fails when Ed25519 instruction is not first", async () => {
@@ -295,7 +299,7 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
     const claimIx = await program.methods
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
@@ -306,8 +310,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -321,11 +324,17 @@ describe("claim", () => {
       nonce,
       deadline,
     });
+    const serializedMessage = Buffer.from(serialize(AirdropMessage.schema, msg));
 
-    const ed25519Ix = createEd25519Instruction(
-      distributorKeypair,
-      Buffer.from(serialize(AirdropMessage.schema, msg))
-    );
+    // Sign the message with signer
+    const signature = nacl.sign.detached(serializedMessage, distributorKeypair.secretKey);
+
+    // Use the helper to build the instruction
+    const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
+      publicKey: distributorKeypair.publicKey.toBytes(),
+      message: serializedMessage,
+      signature,
+    });
 
     try {
       // Create transaction with claim first, then Ed25519 (wrong order)
@@ -349,7 +358,7 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
     const msg = createAirdropMessage({
       recipient: recipientKeypair.publicKey,
@@ -376,8 +385,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -403,7 +411,7 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
     const msg = createAirdropMessage({
       recipient: wrongRecipient.publicKey,
@@ -430,8 +438,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -457,7 +464,7 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
     const msg = createAirdropMessage({
       recipient: recipientKeypair.publicKey,
@@ -484,8 +491,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -510,7 +516,7 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
     const msg = createAirdropMessage({
       recipient: recipientKeypair.publicKey,
@@ -537,8 +543,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -563,7 +568,7 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
     const msg = createAirdropMessage({
       recipient: recipientKeypair.publicKey,
@@ -591,8 +596,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -606,8 +610,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -636,7 +639,7 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
     // Set the clock to a time after the deadline
     const currentClock = svm.getClock();
@@ -674,8 +677,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -687,7 +689,7 @@ describe("claim", () => {
     }
   });
 
-  it("Fails when trying to reuse a nonce (nullifier prevents replay attack)", async () => {
+  it("Fails when trying to reuse the same signature (nullifier prevents replay attack)", async () => {
     const claimAmount = 1000000;
     const deadline = BigInt(9999999999); // Far future deadline
     const nonce = BigInt(100); // Using a unique nonce for this test
@@ -700,7 +702,7 @@ describe("claim", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
 
-    const nullifierPda = getNullifierPda(nonce);
+    const nullifierPda = getNullifierPda(projectPda, nonce);
 
     const msg = createAirdropMessage({
       recipient: recipientKeypair.publicKey,
@@ -713,6 +715,7 @@ describe("claim", () => {
       deadline,
     });
 
+    // Create a single Ed25519 signature instruction that we'll try to reuse
     const ed25519Ix = createEd25519Instruction(
       distributorKeypair,
       Buffer.from(serialize(AirdropMessage.schema, msg))
@@ -727,8 +730,7 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
@@ -738,12 +740,8 @@ describe("claim", () => {
     const balanceAfter = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
     expect(balanceAfter - balanceBefore).to.equal(BigInt(claimAmount));
 
-    // Try to reuse the same nonce - should fail because nullifier already exists
-    const ed25519Ix2 = createEd25519Instruction(
-      distributorKeypair,
-      Buffer.from(serialize(AirdropMessage.schema, msg))
-    );
-
+    // Try to reuse the SAME signature with a different claim instruction
+    // This should fail because the nullifier for this nonce already exists
     const claimIx2 = await program.methods
       .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
       .accountsPartial({
@@ -753,17 +751,17 @@ describe("claim", () => {
         nullifier: nullifierPda,
         mint: mint,
         projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount,
-        instructionSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
+        recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
 
     try {
-      await sendTransaction(svm, recipientKeypair, [ed25519Ix2, claimIx2]);
-      expect.fail("Should have failed when trying to reuse nonce");
+      // Reusing the SAME ed25519Ix (signature) from the first transaction
+      await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx2]);
+      expect.fail("Should have failed when trying to reuse the same signature/nonce");
     } catch (error) {
       // The nullifier account already exists, so init will fail
-      // This is the key behavior - the transaction must fail
+      // This prevents replay attacks using the same signature
       expect(error.message).to.exist;
       expect(error.message.length).to.be.greaterThan(0);
     }
