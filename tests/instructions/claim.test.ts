@@ -223,66 +223,6 @@ describe("claim", () => {
     await sendTransaction(svm, authorityKeypair, [mintToIx]);
   });
 
-
-  it("Successfully claims airdrop with valid signature", async () => {
-    const claimAmount = 1000000;
-    const deadline = BigInt(9999999999); // Far future deadline
-    const nonce = BigInt(1);
-
-    // Get the balance before the claim
-    const balanceBefore = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
-
-    // Get the recipient's token account
-    const recipientTokenAccount = await getAssociatedTokenAddress(
-      mint,
-      recipientKeypair.publicKey,
-      false,
-      TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
-    );
-
-    // Get the nullifier PDA
-    const nullifierPda = getNullifierPda(projectPda, nonce);
-
-    // Create the airdrop message
-    const msg = createAirdropMessage({
-      recipient: recipientKeypair.publicKey,
-      mint: mint,
-      projectNonce: projectNonce,
-      amount: BigInt(claimAmount),
-      programId: program.programId,
-      version: 1,
-      nonce,
-      deadline,
-    });
-    const serializedMessage = Buffer.from(serialize(AirdropMessage.schema, msg));
-
-    // Create Ed25519 instruction with ALL distributors signing
-    // Both distributors (distributorKeypair and partnerKeypair) must sign
-    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
-      [distributorKeypair, partnerKeypair],
-      serializedMessage
-    );
-
-    // Create the claim instruction
-    const claimIx = await program.methods
-      .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
-      .accountsPartial({
-        recipient: recipientKeypair.publicKey,
-        project: projectPda,
-        nullifier: nullifierPda,
-        mint: mint,
-        projectTokenAccount: projectTokenAccount,
-        recipientTokenAccount: recipientTokenAccount
-      })
-      .instruction();
-    await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
-
-    // Verify the balance has increased by the claim amount
-    const balanceAfter = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
-    expect(balanceAfter - balanceBefore).to.equal(BigInt(claimAmount));
-  });
-
   it("Successfully claims airdrop with multiple signers", async () => {
     const claimAmount = 2000000;
     const deadline = BigInt(9999999999); // Far future deadline
