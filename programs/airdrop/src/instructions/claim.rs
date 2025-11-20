@@ -100,12 +100,16 @@ impl<'info> Claim<'info> {
         // Load the instruction sysvar account (holds all tx instructions)
         let ix_sysvar_account = self.instruction_sysvar.to_account_info();
 
-        // Verify the Ed25519 signature and extract the signed message
-        let (distributor_pubkey, message) = verify_ed25519_signature(&ix_sysvar_account)?;
+        // Verify the Ed25519 signatures and extract signers and message
+        let (signers, message) = verify_ed25519_signature(&ix_sysvar_account)?;
+        require!(!signers.is_empty(), AirdropError::InvalidInstructionSysvar);
 
-        // Validate the distributor's public key against global config
+        // Validate that at least one signature is from the distributor
+        let has_distributor_signature = signers
+            .iter()
+            .any(|pubkey| *pubkey == self.global_config.distributor);
         require!(
-            distributor_pubkey == self.global_config.distributor,
+            has_distributor_signature,
             AirdropError::DistributorMismatch
         );
 

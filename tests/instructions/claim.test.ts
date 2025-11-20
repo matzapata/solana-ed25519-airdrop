@@ -7,7 +7,7 @@ import { LiteSVM, Clock } from "litesvm";
 import { fromWorkspace, LiteSVMProvider } from 'anchor-litesvm';
 import { sendTransaction } from "../utils/svm";
 import { Schema as BorshSchema, serialize } from "borsh";
-import { createEd25519Instruction } from "../utils/ed25519";
+import { createEd25519Instruction, createEd25519InstructionWithMultipleSigners } from "../utils/ed25519";
 import { createSplToken, getSplTokenBalance } from "../utils/spl";
 import { createMintToInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as nacl from "tweetnacl";
@@ -279,6 +279,66 @@ describe("claim", () => {
         recipientTokenAccount: recipientTokenAccount
       })
       .instruction();
+    await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
+
+    // Verify the balance has increased by the claim amount
+    const balanceAfter = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
+    expect(balanceAfter - balanceBefore).to.equal(BigInt(claimAmount));
+  });
+
+  it("Successfully claims airdrop with multiple signers", async () => {
+    const claimAmount = 2000000;
+    const deadline = BigInt(9999999999); // Far future deadline
+    const nonce = BigInt(10);
+
+    // Get the balance before the claim
+    const balanceBefore = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
+
+    // Get the recipient's token account
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    // Get the nullifier PDA
+    const nullifierPda = getNullifierPda(projectPda, nonce);
+
+    // Create the airdrop message
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
+      amount: BigInt(claimAmount),
+      programId: program.programId,
+      version: 1,
+      nonce,
+      deadline,
+    });
+    const serializedMessage = Buffer.from(serialize(AirdropMessage.schema, msg));
+
+    // Create Ed25519 instruction with multiple signers (distributor + partner)
+    // The distributor must be one of the signers for the claim to succeed
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
+      serializedMessage
+    );
+
+    // Create the claim instruction
+    const claimIx = await program.methods
+      .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
+      .accountsPartial({
+        recipient: recipientKeypair.publicKey,
+        project: projectPda,
+        nullifier: nullifierPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount
+      })
+      .instruction();
+    
     await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
 
     // Verify the balance has increased by the claim amount

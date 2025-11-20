@@ -8,9 +8,10 @@ use solana_program::ed25519_program;
 use crate::errors::AirdropError;
 
 /// Constants for parsing Ed25519 instruction data
-pub const HEADER_LEN: usize = 16;  // fixed-size instruction header
-pub const PUBKEY_LEN: usize = 32;  // size of an Ed25519 public key
-pub const SIG_LEN: usize = 64;     // size of an Ed25519 signature
+pub const MIN_HEADER_LEN: usize = 2;  // minimum header: 1 byte count + 1 byte padding
+pub const SIG_ENTRY_LEN: usize = 14;  // 7 u16 values per signature entry (14 bytes)
+pub const PUBKEY_LEN: usize = 32;     // size of an Ed25519 public key
+pub const SIG_LEN: usize = 64;        // size of an Ed25519 signature
 
 /// Parsed Ed25519 signature data
 #[derive(Debug, Clone)]
@@ -50,83 +51,95 @@ pub fn validate_ed25519_ix(
     Ok(ed_ix)
 }
 
-/// Parses the Ed25519 instruction data format to extract offsets for signature, pubkey, and message
-pub fn parse_ed25519_ix_data(data: &[u8]) -> Result<Ed25519SignatureOffsets> {
-    // Verify minimum length
+/// Parses the Ed25519 instruction data format to extract offsets for all signatures
+pub fn parse_ed25519_ix_data(data: &[u8]) -> Result<Vec<Ed25519SignatureOffsets>> {
+    // Verify minimum length (at least count byte + padding + one signature entry)
     require!(
-        data.len() >= HEADER_LEN,
+        data.len() >= MIN_HEADER_LEN + SIG_ENTRY_LEN,
         AirdropError::InvalidInstructionSysvar
     );
 
-    // First byte: number of signatures (must be 1)
+    // First byte: number of signatures
     let sig_count = data[0] as usize;
-    require!(sig_count == 1, AirdropError::InvalidInstructionSysvar);
+    require!(sig_count > 0, AirdropError::InvalidInstructionSysvar);
+    require!(sig_count <= 255, AirdropError::InvalidInstructionSysvar);
 
-    // Helper to read u16 offsets from the header (little-endian)
-    let read_u16 = |i: usize| -> Result<u16> {
-        let start = 2 + 2 * i;
-        let end = start + 2;
+    // Calculate minimum header length: 2 bytes (count + padding) + 14 bytes per signature
+    let min_header_len = MIN_HEADER_LEN + (sig_count * SIG_ENTRY_LEN);
+    require!(
+        data.len() >= min_header_len,
+        AirdropError::InvalidInstructionSysvar
+    );
+
+    // Helper to read u16 offsets (little-endian)
+    let read_u16 = |offset: usize| -> Result<u16> {
+        let end = offset + 2;
         let src = data
-            .get(start..end)
+            .get(offset..end)
             .ok_or(error!(AirdropError::InvalidInstructionSysvar))?;
         let mut arr = [0u8; 2];
         arr.copy_from_slice(src);
         Ok(u16::from_le_bytes(arr))
     };
 
-    // Extract the offsets for signature, pubkey, and message
-    let signature_offset = read_u16(0)? as usize;
-    let signature_instruction_index = read_u16(1)?;
-    let public_key_offset = read_u16(2)? as usize;
-    let public_key_instruction_index = read_u16(3)?;
-    let message_data_offset = read_u16(4)? as usize;
-    let message_data_size = read_u16(5)? as usize;
-    let message_instruction_index = read_u16(6)?;
+    let mut offsets_vec = Vec::with_capacity(sig_count);
+    let this_ix = u16::MAX; // Sentinel value for "current instruction"
 
-    // Enforce that all offsets point to the current instruction's data.
-    // The Ed25519 program uses u16::MAX as a sentinel value for "current instruction".
-    // This prevents the program from accidentally reading signature, public key,
-    // or message bytes from some other instruction in the transaction.
-    let this_ix = u16::MAX;
-    require!(
-        signature_instruction_index == this_ix
-            && public_key_instruction_index == this_ix
-            && message_instruction_index == this_ix,
-        AirdropError::InvalidInstructionSysvar
-    );
+    // Parse each signature entry
+    for i in 0..sig_count {
+        let base_offset = MIN_HEADER_LEN + (i * SIG_ENTRY_LEN);
+        
+        // Read the 7 u16 values for this signature
+        let signature_offset = read_u16(base_offset)? as usize;
+        let signature_instruction_index = read_u16(base_offset + 2)?;
+        let public_key_offset = read_u16(base_offset + 4)? as usize;
+        let public_key_instruction_index = read_u16(base_offset + 6)?;
+        let message_data_offset = read_u16(base_offset + 8)? as usize;
+        let message_data_size = read_u16(base_offset + 10)? as usize;
+        let message_instruction_index = read_u16(base_offset + 12)?;
 
-    // Ensure all offsets point beyond the 16-byte header,
-    // i.e. into the region containing the signature, public key, and message
-    require!(
-        signature_offset >= HEADER_LEN
-            && public_key_offset >= HEADER_LEN
-            && message_data_offset >= HEADER_LEN,
-        AirdropError::InvalidInstructionSysvar
-    );
+        // Enforce that all offsets point to the current instruction's data
+        require!(
+            signature_instruction_index == this_ix
+                && public_key_instruction_index == this_ix
+                && message_instruction_index == this_ix,
+            AirdropError::InvalidInstructionSysvar
+        );
 
-    // Bounds checks for signature, pubkey, and message slices
-    require!(
-        data.len() >= signature_offset + SIG_LEN,
-        AirdropError::InvalidInstructionSysvar
-    );
-    require!(
-        data.len() >= public_key_offset + PUBKEY_LEN,
-        AirdropError::InvalidInstructionSysvar
-    );
-    require!(
-        data.len() >= message_data_offset + message_data_size,
-        AirdropError::InvalidInstructionSysvar
-    );
+        // Ensure all offsets point beyond the header
+        require!(
+            signature_offset >= min_header_len
+                && public_key_offset >= min_header_len
+                && message_data_offset >= min_header_len,
+            AirdropError::InvalidInstructionSysvar
+        );
 
-    Ok(Ed25519SignatureOffsets {
-        signature_offset,
-        signature_instruction_index,
-        public_key_offset,
-        public_key_instruction_index,
-        message_data_offset,
-        message_data_size,
-        message_instruction_index,
-    })
+        // Bounds checks for signature, pubkey, and message slices
+        require!(
+            data.len() >= signature_offset + SIG_LEN,
+            AirdropError::InvalidInstructionSysvar
+        );
+        require!(
+            data.len() >= public_key_offset + PUBKEY_LEN,
+            AirdropError::InvalidInstructionSysvar
+        );
+        require!(
+            data.len() >= message_data_offset + message_data_size,
+            AirdropError::InvalidInstructionSysvar
+        );
+
+        offsets_vec.push(Ed25519SignatureOffsets {
+            signature_offset,
+            signature_instruction_index,
+            public_key_offset,
+            public_key_instruction_index,
+            message_data_offset,
+            message_data_size,
+            message_instruction_index,
+        });
+    }
+
+    Ok(offsets_vec)
 }
 
 /// Extracts the public key from Ed25519 instruction data at the specified offset
@@ -142,10 +155,11 @@ pub fn extract_signed_message<'a>(data: &'a [u8], offsets: &Ed25519SignatureOffs
     &data[offsets.message_data_offset..offsets.message_data_offset + offsets.message_data_size]
 }
 
-/// Validates and parses an Ed25519 signature, returning the signed message
+/// Validates and parses Ed25519 signatures, returning the message and all signers
+/// All signatures are already verified by the Ed25519 program and sign the same message
 pub fn verify_ed25519_signature(
     ix_sysvar_account: &AccountInfo,
-) -> Result<(Pubkey, Vec<u8>)> {
+) -> Result<(Vec<Pubkey>, Vec<u8>)> {
     // Get current instruction index
     let current_ix_index = ix_sysvar::load_current_index_checked(ix_sysvar_account)
         .map_err(|_| error!(AirdropError::InvalidInstructionSysvar))?;
@@ -153,13 +167,20 @@ pub fn verify_ed25519_signature(
     // Validate that the previous instruction is an Ed25519 verification
     let ed_ix = validate_ed25519_ix(ix_sysvar_account, current_ix_index as usize)?;
 
-    // Parse the Ed25519 instruction data
-    let offsets = parse_ed25519_ix_data(&ed_ix.data)?;
+    // Parse the Ed25519 instruction data (may contain multiple signatures)
+    let offsets_vec = parse_ed25519_ix_data(&ed_ix.data)?;
+    require!(!offsets_vec.is_empty(), AirdropError::InvalidInstructionSysvar);
 
-    // Extract the public key and message
-    let pubkey = extract_signer_pubkey(&ed_ix.data, &offsets)?;
-    let message = extract_signed_message(&ed_ix.data, &offsets).to_vec();
+    // Extract the message from the first signature (all signatures sign the same message)
+    let message = extract_signed_message(&ed_ix.data, &offsets_vec[0]).to_vec();
 
-    Ok((pubkey, message))
+    // Extract all public keys (signers)
+    let mut signers = Vec::with_capacity(offsets_vec.len());
+    for offsets in offsets_vec.iter() {
+        let pubkey = extract_signer_pubkey(&ed_ix.data, offsets)?;
+        signers.push(pubkey);
+    }
+
+    Ok((signers, message))
 }
 
