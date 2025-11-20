@@ -11,6 +11,7 @@ use crate::errors::AirdropError;
 pub const HEADER_LEN: usize = 16;  // fixed-size instruction header
 pub const PUBKEY_LEN: usize = 32;  // size of an Ed25519 public key
 pub const SIG_LEN: usize = 64;     // size of an Ed25519 signature
+pub const ED25519_PROGRAM_ID: Pubkey = pubkey!("Ed25519SigVerify111111111111111111111111111");
 
 /// Parsed Ed25519 signature data
 #[derive(Debug, Clone)]
