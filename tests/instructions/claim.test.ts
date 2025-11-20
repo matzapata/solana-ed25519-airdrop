@@ -1,16 +1,15 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Airdrop } from "../../target/types/airdrop";
-import { Ed25519Program, Keypair, PublicKey } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import { expect } from "chai";
 import { LiteSVM, Clock } from "litesvm";
 import { fromWorkspace, LiteSVMProvider } from 'anchor-litesvm';
 import { sendTransaction } from "../utils/svm";
 import { Schema as BorshSchema, serialize } from "borsh";
-import { createEd25519Instruction, createEd25519InstructionWithMultipleSigners } from "../utils/ed25519";
+import { createEd25519InstructionWithMultipleSigners } from "../utils/ed25519";
 import { createSplToken, getSplTokenBalance } from "../utils/spl";
 import { createMintToInstruction, getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import * as nacl from "tweetnacl";
 
 // Define the message structure for Borsh serialization
 
@@ -172,8 +171,9 @@ describe("claim", () => {
       program.programId
     );
 
+    // Set up with two distributors from the start
     await program.methods
-      .createGlobalConfig(distributorKeypair.publicKey)
+      .createGlobalConfig([distributorKeypair.publicKey, partnerKeypair.publicKey])
       .accountsPartial({
         authority: authorityKeypair.publicKey,
         globalConfig: globalConfigPda,
@@ -257,15 +257,12 @@ describe("claim", () => {
     });
     const serializedMessage = Buffer.from(serialize(AirdropMessage.schema, msg));
 
-    // Sign the serialized message
-    const signature = nacl.sign.detached(serializedMessage, distributorKeypair.secretKey);
-
-    // Use the helper to build the instruction
-    const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
-      publicKey: distributorKeypair.publicKey.toBytes(),
-      message: serializedMessage,
-      signature,
-    });
+    // Create Ed25519 instruction with ALL distributors signing
+    // Both distributors (distributorKeypair and partnerKeypair) must sign
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
+      serializedMessage
+    );
 
     // Create the claim instruction
     const claimIx = await program.methods
@@ -319,8 +316,8 @@ describe("claim", () => {
     });
     const serializedMessage = Buffer.from(serialize(AirdropMessage.schema, msg));
 
-    // Create Ed25519 instruction with multiple signers (distributor + partner)
-    // The distributor must be one of the signers for the claim to succeed
+    // Create Ed25519 instruction with ALL distributors signing
+    // Both distributors (distributorKeypair and partnerKeypair) must sign for the claim to succeed
     const ed25519Ix = createEd25519InstructionWithMultipleSigners(
       [distributorKeypair, partnerKeypair],
       serializedMessage
@@ -344,6 +341,61 @@ describe("claim", () => {
     // Verify the balance has increased by the claim amount
     const balanceAfter = await getSplTokenBalance(svm, mint, recipientKeypair.publicKey);
     expect(balanceAfter - balanceBefore).to.equal(BigInt(claimAmount));
+  });
+
+  it("Fails when not all distributors have signed", async () => {
+    const claimAmount = 3000000;
+    const deadline = BigInt(9999999999); // Far future deadline
+    const nonce = BigInt(11);
+
+    const recipientTokenAccount = await getAssociatedTokenAddress(
+      mint,
+      recipientKeypair.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+
+    const nullifierPda = getNullifierPda(projectPda, nonce);
+
+    const msg = createAirdropMessage({
+      recipient: recipientKeypair.publicKey,
+      mint: mint,
+      projectNonce: projectNonce,
+      amount: BigInt(claimAmount),
+      programId: program.programId,
+      version: 1,
+      nonce,
+      deadline,
+    });
+    const serializedMessage = Buffer.from(serialize(AirdropMessage.schema, msg));
+
+    // Create Ed25519 instruction with only ONE distributor (missing partnerKeypair)
+    // This should fail because both distributors are required (set up in before hook)
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair], // Only one distributor, missing partnerKeypair
+      serializedMessage
+    );
+
+    const claimIx = await program.methods
+      .claim(new anchor.BN(projectNonce.toString()), new anchor.BN(nonce.toString()))
+      .accountsPartial({
+        recipient: recipientKeypair.publicKey,
+        globalConfig: globalConfigPda,
+        project: projectPda,
+        nullifier: nullifierPda,
+        mint: mint,
+        projectTokenAccount: projectTokenAccount,
+        recipientTokenAccount: recipientTokenAccount
+      })
+      .instruction();
+
+    try {
+      await sendTransaction(svm, recipientKeypair, [ed25519Ix, claimIx]);
+      expect.fail("Should have failed because not all distributors signed");
+    } catch (error) {
+      expect(error.message).to.include("DistributorMismatch");
+    }
   });
 
   it("Fails when Ed25519 instruction is not first", async () => {
@@ -386,15 +438,11 @@ describe("claim", () => {
     });
     const serializedMessage = Buffer.from(serialize(AirdropMessage.schema, msg));
 
-    // Sign the message with signer
-    const signature = nacl.sign.detached(serializedMessage, distributorKeypair.secretKey);
-
-    // Use the helper to build the instruction
-    const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
-      publicKey: distributorKeypair.publicKey.toBytes(),
-      message: serializedMessage,
-      signature,
-    });
+    // Create Ed25519 instruction with ALL distributors signing
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
+      serializedMessage
+    );
 
     try {
       // Create transaction with claim first, then Ed25519 (wrong order)
@@ -431,8 +479,9 @@ describe("claim", () => {
       deadline,
     });
 
-    const ed25519Ix = createEd25519Instruction(
-      invalidDistributorKeypair,
+    // Use invalid distributor + partner (missing valid distributor)
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [invalidDistributorKeypair, partnerKeypair],
       Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
@@ -484,8 +533,8 @@ describe("claim", () => {
       deadline,
     });
 
-    const ed25519Ix = createEd25519Instruction(
-      distributorKeypair,
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
       Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
@@ -537,8 +586,8 @@ describe("claim", () => {
       deadline,
     });
 
-    const ed25519Ix = createEd25519Instruction(
-      distributorKeypair,
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
       Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
@@ -589,8 +638,8 @@ describe("claim", () => {
       deadline,
     });
 
-    const ed25519Ix = createEd25519Instruction(
-      distributorKeypair,
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
       Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
@@ -641,8 +690,8 @@ describe("claim", () => {
       deadline,
     });
 
-    const ed25519Ix = createEd25519Instruction(
-      distributorKeypair,
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
       Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
@@ -723,8 +772,8 @@ describe("claim", () => {
       deadline,
     });
 
-    const ed25519Ix = createEd25519Instruction(
-      distributorKeypair,
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
       Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 
@@ -776,8 +825,8 @@ describe("claim", () => {
     });
 
     // Create a single Ed25519 signature instruction that we'll try to reuse
-    const ed25519Ix = createEd25519Instruction(
-      distributorKeypair,
+    const ed25519Ix = createEd25519InstructionWithMultipleSigners(
+      [distributorKeypair, partnerKeypair],
       Buffer.from(serialize(AirdropMessage.schema, msg))
     );
 

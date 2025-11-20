@@ -21,10 +21,11 @@ pub struct CreateGlobalConfig<'info> {
 }
 
 impl<'info> CreateGlobalConfig<'info> {
-    pub fn create(&mut self, distributor: Pubkey) -> Result<()> {
+    pub fn create(&mut self, distributors: Vec<Pubkey>) -> Result<()> {
+        require!(!distributors.is_empty(), crate::errors::AirdropError::InvalidInstructionSysvar);
         self.global_config.set_inner(GlobalConfig {
             authority: self.authority.key(),
-            distributor,
+            distributors,
         });
 
         Ok(())

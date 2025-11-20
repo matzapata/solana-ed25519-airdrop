@@ -4,7 +4,6 @@ use anchor_lang::solana_program::{
     pubkey::Pubkey,
     sysvar::instructions as ix_sysvar,
 };
-use solana_program::ed25519_program;
 use crate::errors::AirdropError;
 
 /// Constants for parsing Ed25519 instruction data
@@ -12,6 +11,7 @@ pub const MIN_HEADER_LEN: usize = 2;  // minimum header: 1 byte count + 1 byte p
 pub const SIG_ENTRY_LEN: usize = 14;  // 7 u16 values per signature entry (14 bytes)
 pub const PUBKEY_LEN: usize = 32;     // size of an Ed25519 public key
 pub const SIG_LEN: usize = 64;        // size of an Ed25519 signature
+pub const ED25519_PROGRAM_ID: Pubkey = pubkey!("Ed25519SigVerify111111111111111111111111111");
 
 /// Parsed Ed25519 signature data
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ pub fn validate_ed25519_ix(
 
     // Ensure it is the Ed25519 program and uses no accounts (stateless check)
     require!(
-        ed_ix.program_id == ed25519_program::id(),
+        ed_ix.program_id == ED25519_PROGRAM_ID,
         AirdropError::BadEd25519Program
     );
     require!(ed_ix.accounts.is_empty(), AirdropError::BadEd25519Accounts);

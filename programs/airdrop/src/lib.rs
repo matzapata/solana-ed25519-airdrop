@@ -14,8 +14,8 @@ declare_id!("H3eYcELNCrf1iTxVukbkfxu1uzuzSbgeZqjAPjhZWQbe");
 pub mod airdrop {
     use super::*;
 
-    pub fn create_global_config(ctx: Context<CreateGlobalConfig>, distributor: Pubkey) -> Result<()> {
-        ctx.accounts.create(distributor)
+    pub fn create_global_config(ctx: Context<CreateGlobalConfig>, distributors: Vec<Pubkey>) -> Result<()> {
+        ctx.accounts.create(distributors)
     }
 
     pub fn create_project(ctx: Context<CreateProject>, nonce: u64) -> Result<()> {

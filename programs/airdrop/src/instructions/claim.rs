@@ -104,14 +104,19 @@ impl<'info> Claim<'info> {
         let (signers, message) = verify_ed25519_signature(&ix_sysvar_account)?;
         require!(!signers.is_empty(), AirdropError::InvalidInstructionSysvar);
 
-        // Validate that at least one signature is from the distributor
-        let has_distributor_signature = signers
-            .iter()
-            .any(|pubkey| *pubkey == self.global_config.distributor);
+        // Validate that ALL distributors have signed the message
         require!(
-            has_distributor_signature,
+            signers.len() >= self.global_config.distributors.len(),
             AirdropError::DistributorMismatch
         );
+
+        // Check that every distributor is present in the signers
+        for distributor in self.global_config.distributors.iter() {
+            require!(
+                signers.contains(distributor),
+                AirdropError::DistributorMismatch
+            );
+        }
 
         // Deserialize the message using Borsh
         let airdrop_msg =
